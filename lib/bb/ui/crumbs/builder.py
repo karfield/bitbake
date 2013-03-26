@@ -47,6 +47,7 @@ from bb.ui.crumbs.hig.deployimagedialog import DeployImageDialog
 from bb.ui.crumbs.hig.layerselectiondialog import LayerSelectionDialog
 from bb.ui.crumbs.hig.imageselectiondialog import ImageSelectionDialog
 from bb.ui.crumbs.hig.parsingwarningsdialog import ParsingWarningsDialog
+from bb.ui.crumbs.hig.propertydialog import PropertyDialog
 
 hobVer = 20120808
 
@@ -469,8 +470,6 @@ class Builder(gtk.Window):
         self.handler.connect("recipe-populated",         self.handler_recipe_populated_cb)
         self.handler.connect("package-populated",        self.handler_package_populated_cb)
 
-        self.handler.set_config_filter(hob_conf_filter)
-
         self.initiate_new_build_async()
 
     def create_visual_elements(self):
@@ -552,6 +551,7 @@ class Builder(gtk.Window):
         self.handler.init_cooker()
         self.handler.set_extra_inherit("image_types")
         self.generate_configuration()
+        self.load_template(TemplateMgr.convert_to_template_pathfilename("default", ".hob/"))
 
     def update_config_async(self):
         self.switch_page(self.MACHINE_SELECTION)
@@ -660,8 +660,7 @@ class Builder(gtk.Window):
             if not os.path.exists(layer+'/conf/layer.conf'):
                 return False
 
-        self.save_defaults() # remember layers and settings
-        self.update_config_async()
+        self.set_user_config_extra()
         return True
 
     def save_template(self, path, defaults=False):
@@ -765,6 +764,17 @@ class Builder(gtk.Window):
             self.handler.set_git_proxy("", "")
             self.handler.set_cvs_proxy("", "")
 
+    def set_user_config_extra(self):
+        self.handler.set_rootfs_size(self.configuration.image_rootfs_size)
+        self.handler.set_extra_size(self.configuration.image_extra_size)
+        self.handler.set_incompatible_license(self.configuration.incompat_license)
+        self.handler.set_sdk_machine(self.configuration.curr_sdk_machine)
+        self.handler.set_image_fstypes(self.configuration.image_fstypes)
+        self.handler.set_extra_config(self.configuration.extra_setting)
+        self.handler.set_extra_inherit("packageinfo")
+        self.handler.set_extra_inherit("image_types")
+        self.set_user_config_proxies()
+
     def set_user_config(self):
         self.handler.init_cooker()
         # set bb layers
@@ -778,15 +788,7 @@ class Builder(gtk.Window):
         self.handler.set_sstate_mirrors(self.configuration.sstatemirror)
         self.handler.set_pmake(self.configuration.pmake)
         self.handler.set_bbthreads(self.configuration.bbthread)
-        self.handler.set_rootfs_size(self.configuration.image_rootfs_size)
-        self.handler.set_extra_size(self.configuration.image_extra_size)
-        self.handler.set_incompatible_license(self.configuration.incompat_license)
-        self.handler.set_sdk_machine(self.configuration.curr_sdk_machine)
-        self.handler.set_image_fstypes(self.configuration.image_fstypes)
-        self.handler.set_extra_config(self.configuration.extra_setting)
-        self.handler.set_extra_inherit("packageinfo")
-        self.handler.set_extra_inherit("image_types")
-        self.set_user_config_proxies()
+        self.set_user_config_extra()
 
     def update_recipe_model(self, selected_image, selected_recipes):
         self.recipe_model.set_selected_image(selected_image)
@@ -1023,10 +1025,12 @@ class Builder(gtk.Window):
             fraction = 0.9
         elif self.current_step == self.IMAGE_GENERATING:
             fraction = 1.0
+            version = ""
             self.parameters.image_names = []
             selected_image = self.recipe_model.get_selected_image()
             if selected_image == self.recipe_model.__custom_image__:
-                version = self.recipe_model.get_custom_image_version()
+                if self.configuration.initial_selected_image != selected_image:
+                    version = self.recipe_model.get_custom_image_version()
                 linkname = 'hob-image' + version+ "-" + self.configuration.curr_mach
             else:
                 linkname = selected_image + '-' + self.configuration.curr_mach
@@ -1202,11 +1206,37 @@ class Builder(gtk.Window):
 
         self.fast_generate_image_async(True)
 
-    def show_binb_dialog(self, binb):
-        markup = "<b>Brought in by:</b>\n%s" % binb
-        ptip = PersistentTooltip(markup, self)
+    def show_recipe_property_dialog(self, properties):
+        information = {}
+        dialog = PropertyDialog(title = properties["name"] +' '+ "properties",
+                      parent = self,
+                      information = properties,
+                      flags = gtk.DIALOG_DESTROY_WITH_PARENT
+                          | gtk.DIALOG_NO_SEPARATOR)
 
-        ptip.show()
+        dialog.set_modal(False)
+
+        button = dialog.add_button("Close", gtk.RESPONSE_NO)
+        HobAltButton.style_button(button)
+        button.connect("clicked", lambda w: dialog.destroy())
+
+        dialog.run()
+
+    def show_packages_property_dialog(self, properties):
+        information = {}
+        dialog = PropertyDialog(title = properties["name"] +' '+ "properties",
+                      parent = self,
+                      information = properties,
+                      flags = gtk.DIALOG_DESTROY_WITH_PARENT
+                          | gtk.DIALOG_NO_SEPARATOR)
+
+        dialog.set_modal(False)
+
+        button = dialog.add_button("Close", gtk.RESPONSE_NO)
+        HobAltButton.style_button(button)
+        button.connect("clicked", lambda w: dialog.destroy())
+
+        dialog.run()
 
     def show_layer_selection_dialog(self):
         dialog = LayerSelectionDialog(title = "Layers",

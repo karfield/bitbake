@@ -195,9 +195,19 @@ class RecipeSelectionPage (HobPage):
         button_box.pack_end(self.back_button, expand=False, fill=False)
 
     def search_entry_changed(self, entry):
+        text = entry.get_text()
+        if self.ins.search_focus:
+            self.ins.search_focus = False
+        elif self.ins.page_changed:
+            self.ins.page_change = False
+            self.filter_search(entry)
+        elif text not in self.ins.search_names:
+            self.filter_search(entry)
+
+    def filter_search(self, entry):
+        text = entry.get_text()
         current_tab = self.ins.get_current_page()
         filter = self.pages[current_tab]['filter']
-        text = entry.get_text()
         filter[RecipeListModel.COL_NAME] = text
         self.tables[current_tab].set_model(self.recipe_model.tree_model(filter, search_data=text))
         if self.recipe_model.filtered_nb == 0:
@@ -217,7 +227,7 @@ class RecipeSelectionPage (HobPage):
     def button_click_cb(self, widget, event):
         path, col = widget.table_tree.get_cursor()
         tree_model = widget.table_tree.get_model()
-        if path: # else activation is likely a removal
+        if path and col.get_title() != 'Included': # else activation is likely a removal
             properties = {'summary': '', 'name': '', 'version': '', 'revision': '', 'binb': '', 'group': '', 'license': '', 'homepage': '', 'bugtracker': '', 'description': ''}
             properties['summary'] = tree_model.get_value(tree_model.get_iter(path), RecipeListModel.COL_SUMMARY)
             properties['name'] = tree_model.get_value(tree_model.get_iter(path), RecipeListModel.COL_NAME)

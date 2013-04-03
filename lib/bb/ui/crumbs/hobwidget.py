@@ -165,6 +165,7 @@ class HobViewTable (gtk.VBox):
         no_result_tab.attach(label, 1, 14, 1, 4)
 
         clear_button = HobButton("Clear search")
+        clear_button.set_tooltip_text("Clear search query")
         clear_button.connect('clicked', self.set_search_entry_clear_cb, entry)
         no_result_tab.attach(clear_button, 16, 19, 1, 4)
 
@@ -480,6 +481,8 @@ class HobNotebook(gtk.Notebook):
         self.pages = []
 
         self.search = None
+        self.search_focus = False
+        self.page_changed = False
 
         self.connect("switch-page", self.page_changed_cb)
 
@@ -493,6 +496,7 @@ class HobNotebook(gtk.Notebook):
                 lbl.set_active(False)
 
         if self.search:
+            self.page_changed = True
             self.reset_entry(self.search, page_num)
 
     def append_page(self, child, tab_label, tab_tooltip=None):
@@ -536,15 +540,20 @@ class HobNotebook(gtk.Notebook):
                 child.set_count(0)
 
     def set_search_entry_editable_cb(self, search, event):
+        self.search_focus = True
         search.set_editable(True)
-        search.set_text("")
+        text = search.get_text()
+        if text in self.search_names:
+            search.set_text("")
         style = self.search.get_style()
         style.text[gtk.STATE_NORMAL] = self.get_colormap().alloc_color(HobColors.BLACK, False, False)
         search.set_style(style)
 
     def set_search_entry_reset_cb(self, search, event):
         page_num = self.get_current_page()
-        self.reset_entry(search, page_num)
+        text = search.get_text()
+        if not text:
+            self.reset_entry(search, page_num)
 
     def reset_entry(self, entry, page_num):
         style = entry.get_style()
@@ -559,6 +568,7 @@ class HobNotebook(gtk.Notebook):
         if search.get_editable() == True:
             search.set_text("")
         search.set_icon_sensitive(gtk.ENTRY_ICON_SECONDARY, False)
+        search.grab_focus()
 
     def set_page(self, title):
         for child in self.pages:

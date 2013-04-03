@@ -180,9 +180,19 @@ class PackageSelectionPage (HobPage):
         self.button_box.pack_end(self.back_button, expand=False, fill=False)
 
     def search_entry_changed(self, entry):
+        text = entry.get_text()
+        if self.ins.search_focus:
+            self.ins.search_focus = False
+        elif self.ins.page_changed:
+            self.ins.page_change = False
+            self.filter_search(entry)
+        elif text not in self.ins.search_names:
+            self.filter_search(entry)
+
+    def filter_search(self, entry):
+        text = entry.get_text()
         current_tab = self.ins.get_current_page()
         filter = self.pages[current_tab]['filter']
-        text = entry.get_text()
         filter[PackageListModel.COL_NAME] = text
         self.tables[current_tab].set_model(self.package_model.tree_model(filter, search_data=text))
         if self.package_model.filtered_nb == 0:
@@ -202,12 +212,13 @@ class PackageSelectionPage (HobPage):
     def button_click_cb(self, widget, event):
         path, col = widget.table_tree.get_cursor()
         tree_model = widget.table_tree.get_model()
-        if path: # else activation is likely a removal
-            properties = {'binb': '' , 'name': '', 'size':'', 'recipe':''}
+        if path and col.get_title() != 'Included': # else activation is likely a removal
+            properties = {'binb': '' , 'name': '', 'size':'', 'recipe':'', 'files_list':''}
             properties['binb'] = tree_model.get_value(tree_model.get_iter(path), PackageListModel.COL_BINB)
             properties['name'] = tree_model.get_value(tree_model.get_iter(path), PackageListModel.COL_NAME)
             properties['size'] = tree_model.get_value(tree_model.get_iter(path), PackageListModel.COL_SIZE)
             properties['recipe'] = tree_model.get_value(tree_model.get_iter(path), PackageListModel.COL_RCP)
+            properties['files_list'] = tree_model.get_value(tree_model.get_iter(path), PackageListModel.COL_FLIST)
 
             self.builder.show_recipe_property_dialog(properties)
 

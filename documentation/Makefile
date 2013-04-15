@@ -32,7 +32,7 @@ XSLTOPTS = --stringparam html.stylesheet user-manual-style.css \
            --stringparam  section.label.includes.component.label 1 \
            --xinclude
 ALLPREQ = html pdf tarball
-TARFILES = user-manual-style.css user-manual.html user-manual.pdf figures/user-manual-title.png
+TARFILES = user-manual-style.css user-manual.html user-manual.pdf figures/bitbake-title.png
 MANUALS = $(DOC)/$(DOC).html $(DOC)/$(DOC).pdf
 FIGURES = figures
 STYLESHEET = $(DOC)/*.css

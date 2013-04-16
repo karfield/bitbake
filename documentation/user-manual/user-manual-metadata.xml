@@ -581,7 +581,7 @@ need to import them.</para>
 		'recrdeptask' flags please see the dependencies section.
 	</para>
 	</section>
-	</section>
+
 	
 <section>
 	<title>Parsing</title>
@@ -618,6 +618,7 @@ need to import them.</para>
 			allowed in .conf files.
 		</para>
 	</section>
+	
 <section>
 	<title>Classes</title>
 	<para>BitBake classes are our rudimentary inheritance mechanism. 
@@ -629,6 +630,7 @@ need to import them.</para>
 		<envar>BBPATH</envar>.
 	</para>
 	</section>
+	
 <section>
         <title>.bb files</title>
 	<para>A BitBake (.bb) file is a logical unit of tasks to be executed.
@@ -640,7 +642,7 @@ need to import them.</para>
 		and does handle wildcards.
 	</para>
 	</section>
-</section>	
+</section>
 
 	<section>
 	<title>Events</title>
@@ -820,8 +822,9 @@ need to import them.</para>
 		namespace.
 	</para>
 	</section>
+	</section>
 	
-	<section>
+<section>
 	   <title>Task Checksums and Setscene</title>
 	
 	   <para></para>

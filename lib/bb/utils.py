@@ -27,6 +27,10 @@ import bb
 import bb.msg
 import multiprocessing
 import fcntl
+import subprocess
+import glob
+import traceback
+import errno
 from commands import getstatusoutput
 from contextlib import contextmanager
 
@@ -236,14 +240,16 @@ def _print_trace(body, line):
     """
     Print the Environment of a Text Body
     """
+    error = []
     # print the environment of the method
     min_line = max(1, line-4)
     max_line = min(line + 4, len(body))
-    for i in xrange(min_line, max_line + 1):
+    for i in range(min_line, max_line + 1):
         if line == i:
-            logger.error(' *** %.4d:%s', i, body[i-1])
+            error.append(' *** %.4d:%s' % (i, body[i-1].rstrip()))
         else:
-            logger.error('     %.4d:%s', i, body[i-1])
+            error.append('     %.4d:%s' % (i, body[i-1].rstrip()))
+    return error
 
 def better_compile(text, file, realfile, mode = "exec"):
     """
@@ -253,21 +259,77 @@ def better_compile(text, file, realfile, mode = "exec"):
     try:
         return compile(text, file, mode)
     except Exception as e:
+        error = []
         # split the text into lines again
         body = text.split('\n')
-        logger.error("Error in compiling python function in %s", realfile)
-        logger.error(str(e))
+        error.append("Error in compiling python function in %s:\n" % realfile)
         if e.lineno:
-            logger.error("The lines leading to this error were:")
-            logger.error("\t%d:%s:'%s'", e.lineno, e.__class__.__name__, body[e.lineno-1])
-            _print_trace(body, e.lineno)
+            error.append("The code lines resulting in this error were:")
+            error.extend(_print_trace(body, e.lineno))
         else:
-            logger.error("The function causing this error was:")
+            error.append("The function causing this error was:")
             for line in body:
-                logger.error(line)
+                error.append(line)
+        error.append("%s: %s" % (e.__class__.__name__, str(e)))
+
+        logger.error("\n".join(error))
 
         e = bb.BBHandledException(e)
         raise e
+
+def _print_exception(t, value, tb, realfile, text, context):
+    error = []
+    try:
+        exception = traceback.format_exception_only(t, value)
+        error.append('Error executing a python function in %s:\n' % realfile)
+
+        # Strip 'us' from the stack (better_exec call)
+        tb = tb.tb_next
+
+        textarray = text.split('\n')
+
+        linefailed = tb.tb_lineno
+
+        tbextract = traceback.extract_tb(tb)
+        tbformat = traceback.format_list(tbextract)
+        error.append("The stack trace of python calls that resulted in this exception/failure was:")
+        error.append("File: '%s', lineno: %s, function: %s" % (tbextract[0][0], tbextract[0][1], tbextract[0][2]))
+        error.extend(_print_trace(textarray, linefailed))
+
+        # See if this is a function we constructed and has calls back into other functions in
+        # "text". If so, try and improve the context of the error by diving down the trace
+        level = 0
+        nexttb = tb.tb_next
+        while nexttb is not None and (level+1) < len(tbextract):
+            error.append("File: '%s', lineno: %s, function: %s" % (tbextract[level+1][0], tbextract[level+1][1], tbextract[level+1][2]))
+            if tbextract[level][0] == tbextract[level+1][0] and tbextract[level+1][2] == tbextract[level][0]:
+                # The code was possibly in the string we compiled ourselves
+                error.extend(_print_trace(textarray, tbextract[level+1][1]))
+            elif tbextract[level+1][0].startswith("/"):
+                # The code looks like it might be in a file, try and load it
+                try:
+                    with open(tbextract[level+1][0], "r") as f:
+                        text = f.readlines()
+                        error.extend(_print_trace(text, tbextract[level+1][1]))
+                except:
+                    error.append(tbformat[level+1])
+            elif "d" in context and tbextract[level+1][2]:
+                # Try and find the code in the datastore based on the functionname
+                d = context["d"]
+                functionname = tbextract[level+1][2]
+                text = d.getVar(functionname, True)
+                if text:
+                    error.extend(_print_trace(text.split('\n'), tbextract[level+1][1]))
+                else:
+                    error.append(tbformat[level+1])
+            else:
+                error.append(tbformat[level+1])
+            nexttb = tb.tb_next
+            level = level + 1
+
+        error.append("Exception: %s" % ''.join(exception))
+    finally:
+        logger.error("\n".join(error))
 
 def better_exec(code, context, text = None, realfile = "<code>"):
     """
@@ -287,49 +349,10 @@ def better_exec(code, context, text = None, realfile = "<code>"):
 
         if t in [bb.parse.SkipPackage, bb.build.FuncFailed]:
             raise
-
-        import traceback
-        exception = traceback.format_exception_only(t, value)
-        logger.error('Error executing a python function in %s:\n%s',
-                     realfile, ''.join(exception))
-
-        # Strip 'us' from the stack (better_exec call)
-        tb = tb.tb_next
-
-        textarray = text.split('\n')
-        linefailed = traceback.tb_lineno(tb)
-
-        tbextract = traceback.extract_tb(tb)
-        tbformat = "\n".join(traceback.format_list(tbextract))
-        logger.error("The stack trace of python calls that resulted in this exception/failure was:")
-        for line in tbformat.split('\n'):
-            logger.error(line)
-
-        logger.error("The code that was being executed was:")
-        _print_trace(textarray, linefailed)
-        logger.error("[From file: '%s', lineno: %s, function: %s]", tbextract[0][0], tbextract[0][1], tbextract[0][2])
-
-        # See if this is a function we constructed and has calls back into other functions in
-        # "text". If so, try and improve the context of the error by diving down the trace
-        level = 0
-        nexttb = tb.tb_next
-        while nexttb is not None and (level+1) < len(tbextract):
-            if tbextract[level][0] == tbextract[level+1][0] and tbextract[level+1][2] == tbextract[level][0]:
-                _print_trace(textarray, tbextract[level+1][1])
-                logger.error("[From file: '%s', lineno: %s, function: %s]", tbextract[level+1][0], tbextract[level+1][1], tbextract[level+1][2])
-            elif "d" in context and tbextract[level+1][2]:
-                d = context["d"]
-                functionname = tbextract[level+1][2]
-                text = d.getVar(functionname, True)
-                if text:
-                    _print_trace(text.split('\n'), tbextract[level+1][1])
-                    logger.error("[From file: '%s', lineno: %s, function: %s]", tbextract[level+1][0], tbextract[level+1][1], tbextract[level+1][2])
-                else:
-                    break
-            else:
-                 break
-            nexttb = tb.tb_next
-            level = level + 1
+        try:
+            _print_exception(t, value, tb, realfile, text, context)
+        except Exception as e:
+            logger.error("Exception handler error: %s" % str(e))
 
         e = bb.BBHandledException(e)
         raise e
@@ -394,6 +417,10 @@ def lockfile(name, shared=False, retry=True):
                     return lf
             lf.close()
         except Exception:
+            try:
+                lf.close()
+            except Exception:
+                pass
             pass
         if not retry:
             return None
@@ -423,8 +450,9 @@ def md5_file(filename):
         import md5
         m = md5.new()
 
-    for line in open(filename):
-        m.update(line)
+    with open(filename, "rb") as f:
+        for line in f:
+            m.update(line)
     return m.hexdigest()
 
 def sha256_file(filename):
@@ -440,8 +468,9 @@ def sha256_file(filename):
         return None
 
     s = hashlib.sha256()
-    for line in open(filename):
-        s.update(line)
+    with open(filename, "rb") as f:
+        for line in f:
+            s.update(line)
     return s.hexdigest()
 
 def preserved_envvars_exported():
@@ -539,11 +568,9 @@ def remove(path, recurse=False):
     if not path:
         return
     if recurse:
-        import subprocess, glob
         # shutil.rmtree(name) would be ideal but its too slow
         subprocess.call(['rm', '-rf'] + glob.glob(path))
         return
-    import os, errno, glob
     for name in glob.glob(path):
         try:
             os.unlink(name)

@@ -126,7 +126,7 @@ class PackageListModel(gtk.ListStore):
 
         sort.set_sort_func(PackageListModel.COL_INC, self.sort_column, PackageListModel.COL_INC)
         sort.set_sort_func(PackageListModel.COL_SIZE, self.sort_column, PackageListModel.COL_SIZE)
-        sort.set_sort_func(PackageListModel.COL_BINB, self.sort_column, PackageListModel.COL_BINB)
+        sort.set_sort_func(PackageListModel.COL_BINB, self.sort_binb_column)
         sort.set_sort_func(PackageListModel.COL_RCP, self.sort_column, PackageListModel.COL_RCP)
         return sort
 
@@ -148,16 +148,32 @@ class PackageListModel(gtk.ListStore):
             name2 = model.get_value(row2, PackageListModel.COL_NAME)
             return cmp(name1,name2)
 
+    def sort_binb_column(self, model, row1, row2):
+        value1 = model.get_value(row1, PackageListModel.COL_BINB)
+        value2 = model.get_value(row2, PackageListModel.COL_BINB)
+        value1_list = value1.split(', ')
+        value2_list = value2.split(', ')
+
+        value1 = value1_list[0]
+        value2 = value2_list[0]
+
+        cmp_res = cmp(value1, value2)
+        if cmp_res==0:
+            cmp_size = cmp(len(value1_list), len(value2_list))
+            if cmp_size==0:
+                name1 = model.get_value(row1, PackageListModel.COL_NAME)
+                name2 = model.get_value(row2, PackageListModel.COL_NAME)
+                return cmp(name1,name2)
+            else:
+                return cmp_size
+        else:
+            return cmp_res
+
     def exclude_item_sort_func(self, model, iter1, iter2, user_data=None):
         if user_data:
             val1 = model.get_value(iter1, PackageListModel.COL_NAME)
             val2 = model.get_value(iter2, PackageListModel.COL_NAME)
-            if val1.startswith(user_data) and not val2.startswith(user_data):
-                return -1
-            elif not val1.startswith(user_data) and val2.startswith(user_data):
-                return 1
-            else:
-                return 0
+            return self.cmp_vals(val1, val2, user_data)
         else:
             val1 = model.get_value(iter1, PackageListModel.COL_FADE_INC)
             val2 = model.get_value(iter2, PackageListModel.COL_INC)
@@ -167,12 +183,7 @@ class PackageListModel(gtk.ListStore):
         if user_data:
             val1 = model.get_value(iter1, PackageListModel.COL_NAME)
             val2 = model.get_value(iter2, PackageListModel.COL_NAME)
-            if val1.startswith(user_data) and not val2.startswith(user_data):
-                return -1
-            elif not val1.startswith(user_data) and val2.startswith(user_data):
-                return 1
-            else:
-                return 0
+            return self.cmp_vals(val1, val2, user_data)
         else:
             val1 = model.get_value(iter1, PackageListModel.COL_INC)
             val2 = model.get_value(iter2, PackageListModel.COL_INC)
@@ -181,12 +192,15 @@ class PackageListModel(gtk.ListStore):
     def sort_func(self, model, iter1, iter2, user_data):
         val1 = model.get_value(iter1, PackageListModel.COL_NAME)
         val2 = model.get_value(iter2, PackageListModel.COL_NAME)
+        return self.cmp_vals(val1, val2, user_data)
+
+    def cmp_vals(self, val1, val2, user_data):
         if val1.startswith(user_data) and not val2.startswith(user_data):
             return -1
         elif not val1.startswith(user_data) and val2.startswith(user_data):
             return 1
         else:
-            return 0
+            return cmp(val1, val2)
 
     def convert_vpath_to_path(self, view_model, view_path):
         # view_model is the model sorted
@@ -533,12 +547,7 @@ class RecipeListModel(gtk.ListStore):
         if user_data:
             val1 = model.get_value(iter1, RecipeListModel.COL_NAME)
             val2 = model.get_value(iter2, RecipeListModel.COL_NAME)
-            if val1.startswith(user_data) and not val2.startswith(user_data):
-                return -1
-            elif not val1.startswith(user_data) and val2.startswith(user_data):
-                return 1
-            else:
-                return 0
+            return self.cmp_vals(val1, val2, user_data)
         else:
             val1 = model.get_value(iter1, RecipeListModel.COL_FADE_INC)
             val2 = model.get_value(iter2, RecipeListModel.COL_INC)
@@ -548,12 +557,7 @@ class RecipeListModel(gtk.ListStore):
         if user_data:
             val1 = model.get_value(iter1, RecipeListModel.COL_NAME)
             val2 = model.get_value(iter2, RecipeListModel.COL_NAME)
-            if val1.startswith(user_data) and not val2.startswith(user_data):
-                return -1
-            elif not val1.startswith(user_data) and val2.startswith(user_data):
-                return 1
-            else:
-                return 0
+            return self.cmp_vals(val1, val2, user_data)
         else:
             val1 = model.get_value(iter1, RecipeListModel.COL_INC)
             val2 = model.get_value(iter2, RecipeListModel.COL_INC)
@@ -562,12 +566,15 @@ class RecipeListModel(gtk.ListStore):
     def sort_func(self, model, iter1, iter2, user_data):
         val1 = model.get_value(iter1, RecipeListModel.COL_NAME)
         val2 = model.get_value(iter2, RecipeListModel.COL_NAME)
+        return self.cmp_vals(val1, val2, user_data)
+
+    def cmp_vals(self, val1, val2, user_data):
         if val1.startswith(user_data) and not val2.startswith(user_data):
             return -1
         elif not val1.startswith(user_data) and val2.startswith(user_data):
             return 1
         else:
-            return 0
+            return cmp(val1, val2)
 
     """
     Create, if required, and return a filtered gtk.TreeModelSort
@@ -596,7 +603,7 @@ class RecipeListModel(gtk.ListStore):
 
         sort.set_sort_func(RecipeListModel.COL_INC, self.sort_column, RecipeListModel.COL_INC)
         sort.set_sort_func(RecipeListModel.COL_GROUP, self.sort_column, RecipeListModel.COL_GROUP)
-        sort.set_sort_func(RecipeListModel.COL_BINB, self.sort_column, RecipeListModel.COL_BINB)
+        sort.set_sort_func(RecipeListModel.COL_BINB, self.sort_binb_column)
         sort.set_sort_func(RecipeListModel.COL_LIC, self.sort_column, RecipeListModel.COL_LIC)
         return sort
 
@@ -613,6 +620,27 @@ class RecipeListModel(gtk.ListStore):
             name1 = model.get_value(row1, RecipeListModel.COL_NAME)
             name2 = model.get_value(row2, RecipeListModel.COL_NAME)
             return cmp(name1,name2)
+
+    def sort_binb_column(self, model, row1, row2):
+        value1 = model.get_value(row1, RecipeListModel.COL_BINB)
+        value2 = model.get_value(row2, RecipeListModel.COL_BINB)
+        value1_list = value1.split(', ')
+        value2_list = value2.split(', ')
+
+        value1 = value1_list[0]
+        value2 = value2_list[0]
+
+        cmp_res = cmp(value1, value2)
+        if cmp_res==0:
+            cmp_size = cmp(len(value1_list), len(value2_list))
+            if cmp_size==0:
+                name1 = model.get_value(row1, RecipeListModel.COL_NAME)
+                name2 = model.get_value(row2, RecipeListModel.COL_NAME)
+                return cmp(name1,name2)
+            else:
+                return cmp_size
+        else:
+            return cmp_res
 
     def convert_vpath_to_path(self, view_model, view_path):
         filtered_model_path = view_model.convert_path_to_child_path(view_path)

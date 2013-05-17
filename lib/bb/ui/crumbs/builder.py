@@ -108,6 +108,8 @@ class Configuration:
         self.extra_setting = {}
         self.toolchain_build = False
         self.image_fstypes = ""
+        self.image_size = None
+        self.image_packages = []
         # bblayers.conf
         self.layers = []
         # image/recipes/packages
@@ -538,7 +540,7 @@ class Builder(gtk.Window):
         if not self.display_sanity_check:
           func()
         else:
-          sanity_check_post_func = func
+          self.sanity_check_post_func = func
 
     def generate_configuration(self):
         if not self.sanity_checked:

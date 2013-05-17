@@ -43,6 +43,10 @@ from bb import server
 __version__ = "1.19.0"
 logger = logging.getLogger("BitBake")
 
+# Python multiprocessing requires /dev/shm
+if not os.access('/dev/shm', os.W_OK | os.X_OK):
+    sys.exit("FATAL: /dev/shm does not exist or is not writable")
+
 # Unbuffer stdout to avoid log truncation in the event
 # of an unorderly exit as well as to provide timely
 # updates to log files for use with tail
@@ -240,11 +244,25 @@ Default BBFILES are the .bb files in the current directory.""")
 
     idle = server.getServerIdleCB()
 
-    cooker = bb.cooker.BBCooker(configuration, idle, initialenv)
-    cooker.parseCommandLine()
+    try:
+        cooker = bb.cooker.BBCooker(configuration, idle, initialenv)
+        cooker.parseCommandLine()
 
-    server.addcooker(cooker)
-    server.saveConnectionDetails()
+        server.addcooker(cooker)
+        server.saveConnectionDetails()
+    except:
+        while True:
+            try:
+                import queue
+            except ImportError:
+                import Queue as queue
+            try:
+                event = server.event_queue.get(block=False)
+            except (queue.Empty, IOError):
+                break
+            if isinstance(event, logging.LogRecord):
+                logger.handle(event)
+        raise
     server.detach()
 
     # Should no longer need to ever reference cooker
@@ -276,6 +294,6 @@ if __name__ == "__main__":
     except Exception:
         ret = 1
         import traceback
-        traceback.print_exc(5)
+        traceback.print_exc()
     sys.exit(ret)
 

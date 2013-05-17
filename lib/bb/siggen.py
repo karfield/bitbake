@@ -24,7 +24,7 @@ def init(d):
             break
     else:
         logger.error("Invalid signature generator '%s', using default 'noop'\n"
-                     "Available generators: %s",
+                     "Available generators: %s", desired,
                      ', '.join(obj.name for obj in siggens))
         return SignatureGenerator(d)
 
@@ -249,7 +249,7 @@ class SignatureGeneratorBasic(SignatureGenerator):
                 os.fsync(fd)
             os.chmod(tmpfile, 0664)
             os.rename(tmpfile, sigfile)
-        except (OSError, IOError), err:
+        except (OSError, IOError) as err:
             try:
                 os.unlink(tmpfile)
             except OSError:

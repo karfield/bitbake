@@ -87,21 +87,11 @@ class BBCooker:
     Manages one bitbake build run
     """
 
-    def __init__(self, configuration, server_registration_cb, savedenv={}):
+    def __init__(self, configuration):
         self.recipecache = None
         self.skiplist = {}
 
-        self.server_registration_cb = server_registration_cb
-
         self.configuration = configuration
-
-        # Keep a datastore of the initial environment variables and their
-        # values from when BitBake was launched to enable child processes
-        # to use environment variables which have been cleaned from the
-        # BitBake processes env
-        self.savedenv = bb.data.init()
-        for k in savedenv:
-            self.savedenv.setVar(k, savedenv[k])
 
         self.caches_array = []
         # Currently, only Image Creator hob ui needs extra cache.
@@ -148,10 +138,6 @@ class BBCooker:
         if not self.lock:
             bb.fatal("Only one copy of bitbake should be run against a build directory")
 
-        bbpkgs = self.configuration.data.getVar('BBPKGS', True)
-        if bbpkgs and len(self.configuration.pkgs_to_build) == 0:
-            self.configuration.pkgs_to_build.extend(bbpkgs.split())
-
         #
         # Special updated configuration we use for firing events
         #
@@ -175,16 +161,12 @@ class BBCooker:
         self.parser = None
 
     def initConfigurationData(self):
-        self.configuration.data = bb.data.init()
-        if self.configuration.show_environment:
-            self.configuration.data.enableTracking()
+        worker = False
+        if not self.configuration.server_register_idlecallback:
+            worker = True
 
-        if not self.server_registration_cb:
-            self.configuration.data.setVar("BB_WORKERCONTEXT", "1")
-
-        filtered_keys = bb.utils.approved_variables()
-        bb.data.inheritFromOS(self.configuration.data, self.savedenv, filtered_keys)
-        self.configuration.data.setVar("BB_ORIGENV", self.savedenv)
+        self.databuilder = bb.cookerdata.CookerDataBuilder(self.configuration.params, worker)
+        self.configuration.data = self.databuilder.data
 
     def enableDataTracking(self):
         self.configuration.data.enableTracking()
@@ -194,18 +176,9 @@ class BBCooker:
 
     def loadConfigurationData(self):
         self.initConfigurationData()
-
-        try:
-            self.parseConfigurationFiles(self.configuration.prefile,
-                                         self.configuration.postfile)
-        except SyntaxError:
-            sys.exit(1)
-        except Exception:
-            logger.exception("Error parsing configuration files")
-            sys.exit(1)
-
-        if not self.configuration.cmd:
-            self.configuration.cmd = self.configuration.data.getVar("BB_DEFAULT_TASK", True) or "build"
+        self.databuilder.parseBaseConfiguration()
+        self.configuration.data = self.databuilder.data
+        self.configuration.data_hash = self.databuilder.data_hash
 
     def saveConfigurationVar(self, var, val, default_file):
 
@@ -268,7 +241,7 @@ class BBCooker:
             self.configuration.data.varhistory.del_var_history(var)
 
             #add var to the end of default_file
-            default_file = self._findConfigFile(default_file)
+            default_file = bb.cookerdata.findConfigFile(default_file)
 
             with open(default_file, 'r') as f:
                 contents = f.readlines()
@@ -309,44 +282,6 @@ class BBCooker:
         self.recipecache = bb.cache.CacheData(self.caches_array)
 
         self.handleCollections( self.configuration.data.getVar("BBFILE_COLLECTIONS", True) )
-
-    def parseCommandLine(self):
-        # Parse any commandline into actions
-        self.commandlineAction = {'action':None, 'msg':None}
-        if self.configuration.show_environment:
-            if 'world' in self.configuration.pkgs_to_build:
-                self.commandlineAction['msg'] = "'world' is not a valid target for --environment."
-            elif 'universe' in self.configuration.pkgs_to_build:
-                self.commandlineAction['msg'] = "'universe' is not a valid target for --environment."
-            elif len(self.configuration.pkgs_to_build) > 1:
-                self.commandlineAction['msg'] = "Only one target can be used with the --environment option."
-            elif self.configuration.buildfile and len(self.configuration.pkgs_to_build) > 0:
-                self.commandlineAction['msg'] = "No target should be used with the --environment and --buildfile options."
-            elif len(self.configuration.pkgs_to_build) > 0:
-                self.commandlineAction['action'] = ["showEnvironmentTarget", self.configuration.pkgs_to_build]
-                self.configuration.data.setVar("BB_CONSOLELOG", None)
-            else:
-                self.commandlineAction['action'] = ["showEnvironment", self.configuration.buildfile]
-                self.configuration.data.setVar("BB_CONSOLELOG", None)
-        elif self.configuration.buildfile is not None:
-            self.commandlineAction['action'] = ["buildFile", self.configuration.buildfile, self.configuration.cmd]
-        elif self.configuration.revisions_changed:
-            self.commandlineAction['action'] = ["compareRevisions"]
-        elif self.configuration.show_versions:
-            self.commandlineAction['action'] = ["showVersions"]
-        elif self.configuration.parse_only:
-            self.commandlineAction['action'] = ["parseFiles"]
-        elif self.configuration.dot_graph:
-            if self.configuration.pkgs_to_build:
-                self.commandlineAction['action'] = ["generateDotGraph", self.configuration.pkgs_to_build, self.configuration.cmd]
-            else:
-                self.commandlineAction['msg'] = "Please specify a package name for dependency graph generation."
-        else:
-            if self.configuration.pkgs_to_build:
-                self.commandlineAction['action'] = ["buildTargets", self.configuration.pkgs_to_build, self.configuration.cmd]
-            else:
-                #self.commandlineAction['msg'] = "Nothing to do.  Use 'bitbake world' to build everything, or run 'bitbake --help' for usage information."
-                self.commandlineAction = None
 
     def runCommands(self, server, data, abort):
         """
@@ -746,7 +681,7 @@ class BBCooker:
         Find the location on disk of configfile and if it exists and was parsed by BitBake
         emit the ConfigFilePathFound event with the path to the file.
         """
-        path = self._findConfigFile(configfile)
+        path = bb.cookerdata.findConfigFile(configfile)
         if not path:
             return
 
@@ -881,76 +816,6 @@ class BBCooker:
         else:
             shell.start( self )
 
-    def _findConfigFile(self, configfile):
-        path = os.getcwd()
-        while path != "/":
-            confpath = os.path.join(path, "conf", configfile)
-            if os.path.exists(confpath):
-                return confpath
-
-            path, _ = os.path.split(path)
-        return None
-
-    def _findLayerConf(self):
-        return self._findConfigFile("bblayers.conf")
-
-    def parseConfigurationFiles(self, prefiles, postfiles):
-        data = self.configuration.data
-        bb.parse.init_parser(data)
-
-        # Parse files for loading *before* bitbake.conf and any includes
-        for f in prefiles:
-            data = _parse(f, data)
-
-        layerconf = self._findLayerConf()
-        if layerconf:
-            parselog.debug(2, "Found bblayers.conf (%s)", layerconf)
-            data = _parse(layerconf, data)
-
-            layers = (data.getVar('BBLAYERS', True) or "").split()
-
-            data = bb.data.createCopy(data)
-            for layer in layers:
-                parselog.debug(2, "Adding layer %s", layer)
-                data.setVar('LAYERDIR', layer)
-                data = _parse(os.path.join(layer, "conf", "layer.conf"), data)
-                data.expandVarref('LAYERDIR')
-
-            data.delVar('LAYERDIR')
-
-        if not data.getVar("BBPATH", True):
-            raise SystemExit("The BBPATH variable is not set")
-
-        data = _parse(os.path.join("conf", "bitbake.conf"), data)
-
-        # Parse files for loading *after* bitbake.conf and any includes
-        for p in postfiles:
-            data = _parse(p, data)
-
-        # Handle any INHERITs and inherit the base class
-        bbclasses  = ["base"] + (data.getVar('INHERIT', True) or "").split()
-        for bbclass in bbclasses:
-            data = _inherit(bbclass, data)
-
-        # Nomally we only register event handlers at the end of parsing .bb files
-        # We register any handlers we've found so far here...
-        for var in data.getVar('__BBHANDLERS') or []:
-            bb.event.register(var, data.getVar(var))
-
-        if data.getVar("BB_WORKERCONTEXT", False) is None:
-            bb.fetch.fetcher_init(data)
-        bb.codeparser.parser_cache_init(data)
-        bb.event.fire(bb.event.ConfigParsed(), data)
-
-        if data.getVar("BB_INVALIDCONF") is True:
-            data.setVar("BB_INVALIDCONF", False)
-            self.parseConfigurationFiles(self.configuration.prefile,
-                                         self.configuration.postfile)
-        else:
-            bb.parse.init_parser(data)
-            data.setVar('BBINCLUDED',bb.parse.get_file_depends(data))
-            self.configuration.data = data
-            self.configuration.data_hash = data.get_hash()
 
     def handleCollections( self, collections ):
         """Handle collections"""
@@ -1188,7 +1053,7 @@ class BBCooker:
                 return True
             return retval
 
-        self.server_registration_cb(buildFileIdle, rq)
+        self.configuration.server_register_idlecallback(buildFileIdle, rq)
 
     def buildTargets(self, targets, task):
         """
@@ -1246,7 +1111,7 @@ class BBCooker:
         if universe:
             rq.rqdata.warn_multi_bb = True
 
-        self.server_registration_cb(buildTargetsIdle, rq)
+        self.configuration.server_register_idlecallback(buildTargetsIdle, rq)
 
     def generateNewImage(self, image, base_image, package_queue):
         '''
@@ -1546,26 +1411,6 @@ class CookerCollectFiles(object):
                 collectlog.warn("No bb files matched BBFILE_PATTERN_%s '%s'" % (collection, pattern))
 
         return priorities
-
-def catch_parse_error(func):
-    """Exception handling bits for our parsing"""
-    @wraps(func)
-    def wrapped(fn, *args):
-        try:
-            return func(fn, *args)
-        except (IOError, bb.parse.ParseError, bb.data_smart.ExpansionError) as exc:
-            parselog.critical("Unable to parse %s: %s" % (fn, exc))
-            sys.exit(1)
-    return wrapped
-
-@catch_parse_error
-def _parse(fn, data, include=True):
-    return bb.parse.handle(fn, data, include)
-
-@catch_parse_error
-def _inherit(bbclass, data):
-    bb.parse.BBHandler.inherit(bbclass, "configuration INHERITs", 0, data)
-    return data
 
 class ParsingFailure(Exception):
     def __init__(self, realexception, recipe):

@@ -78,7 +78,7 @@ class Command:
         if command not in CommandsAsync.__dict__:
             return None, "No such command"
         self.currentAsyncCommand = (command, commandline)
-        self.cooker.server_registration_cb(self.cooker.runCommands, self.cooker)
+        self.cooker.configuration.server_register_idlecallback(self.cooker.runCommands, self.cooker)
         return True, None
 
     def runAsyncCommand(self):
@@ -143,18 +143,6 @@ class CommandsSync:
         """
         command.cooker.stop()
 
-    def getCmdLineAction(self, command, params):
-        """
-        Get any command parsed from the commandline
-        """
-        cmd_action = command.cooker.commandlineAction
-        if cmd_action is None:
-            return None
-        elif 'msg' in cmd_action and cmd_action['msg']:
-            raise CommandError(cmd_action['msg'])
-        else:
-            return cmd_action['action']
-
     def getVariable(self, command, params):
         """
         Read the value of a variable from configuration.data
@@ -173,6 +161,14 @@ class CommandsSync:
         varname = params[0]
         value = str(params[1])
         command.cooker.configuration.data.setVar(varname, value)
+
+    def setConfig(self, command, params):
+        """
+        Set the value of variable in configuration
+        """
+        varname = params[0]
+        value = str(params[1])
+        setattr(command.cooker.configuration, varname, value)
 
     def enableDataTracking(self, command, params):
         """
@@ -391,7 +387,7 @@ class CommandsAsync:
         """
         prefiles = params[0]
         postfiles = params[1]
-        command.cooker.parseConfigurationFiles(prefiles, postfiles)
+        command.cooker.databuilder.parseConfigurationFiles(prefiles, postfiles)
         command.finishAsyncCommand()
     parseConfigurationFiles.needcache = False
 

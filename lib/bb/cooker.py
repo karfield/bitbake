@@ -129,6 +129,7 @@ class BBCooker:
                 sys.exit("FATAL: Failed to import extra cache class '%s'." % cache_name)
 
         self.configuration.data = None
+        self.initConfigurationData()
         self.loadConfigurationData()
 
         # Take a lock so only one copy of bitbake can run against a given build
@@ -165,7 +166,7 @@ class BBCooker:
         if not self.configuration.server_register_idlecallback:
             worker = True
 
-        self.databuilder = bb.cookerdata.CookerDataBuilder(self.configuration.params, worker)
+        self.databuilder = bb.cookerdata.CookerDataBuilder(self.configuration, worker)
         self.configuration.data = self.databuilder.data
 
     def enableDataTracking(self):
@@ -175,7 +176,6 @@ class BBCooker:
         self.configuration.data.disableTracking()
 
     def loadConfigurationData(self):
-        self.initConfigurationData()
         self.databuilder.parseBaseConfiguration()
         self.configuration.data = self.databuilder.data
         self.configuration.data_hash = self.databuilder.data_hash
@@ -1221,6 +1221,7 @@ class BBCooker:
 
     def reset(self):
         self.state = state.initial
+        self.initConfigurationData()
         self.loadConfigurationData()
 
 def server_main(cooker, func, *args):
@@ -1454,6 +1455,8 @@ class Parser(multiprocessing.Process):
         self.quit = quit
         self.init = init
         multiprocessing.Process.__init__(self)
+        self.context = bb.utils.get_context().copy()
+        self.handlers = bb.event.get_class_handlers().copy()
 
     def run(self):
         if self.init:
@@ -1488,6 +1491,9 @@ class Parser(multiprocessing.Process):
 
     def parse(self, filename, appends, caches_array):
         try:
+            # Reset our environment and handlers to the original settings
+            bb.utils.set_context(self.context.copy())
+            bb.event.set_class_handlers(self.handlers.copy())
             return True, bb.cache.Cache.parse(filename, appends, self.cfg, caches_array)
         except Exception as exc:
             tb = sys.exc_info()[2]

@@ -70,11 +70,23 @@ def get_ui(config):
         # suggest a fixed set this allows you to have flexibility in which
         # ones are available.
         module = __import__("bb.ui", fromlist = [interface])
-        return getattr(module, interface).main
+        return getattr(module, interface)
     except AttributeError:
         sys.exit("FATAL: Invalid user interface '%s' specified.\n"
                  "Valid interfaces: depexp, goggle, ncurses, hob, knotty [default]." % interface)
 
+def gather_extra_cache_data():
+    extra = []
+    interfaces = ['depexp', 'goggle', 'ncurses', 'hob', 'knotty']
+    for i in interfaces:
+        try:
+            ui = __import__("bb.ui." + i, fromlist = [i])
+            if hasattr(ui, "extraCaches"):
+                extra = extra + ui.extraCaches
+            del ui
+        except:
+            pass
+    return extra
 
 # Display bitbake/OE warnings via the BitBake.Warnings logger, ignoring others"""
 warnlog = logging.getLogger("BitBake.Warnings")
@@ -167,7 +179,7 @@ class BitBakeConfigParameters(cookerdata.ConfigParameters):
         parser.add_option("-u", "--ui", help = "userinterface to use",
                    action = "store", dest = "ui")
 
-        parser.add_option("-t", "--servertype", help = "Choose which server to use, none, process or xmlrpc",
+        parser.add_option("-t", "--servertype", help = "Choose which server to use, process or xmlrpc",
                    action = "store", dest = "servertype")
 
         parser.add_option("", "--revisions-changed", help = "Set the exit code depending on whether upstream floating revisions have changed or not",
@@ -178,58 +190,19 @@ class BitBakeConfigParameters(cookerdata.ConfigParameters):
 
         parser.add_option("-B", "--bind", help = "The name/address for the bitbake server to bind to",
                    action = "store", dest = "bind", default = False)
+
         parser.add_option("", "--no-setscene", help = "Do not run any setscene tasks, forces builds",
                    action = "store_true", dest = "nosetscene", default = False)
+
+        parser.add_option("", "--remote-server", help = "Connect to the specified server",
+                   action = "store", dest = "remote_server", default = False)
+
         options, targets = parser.parse_args(sys.argv)
         return options, targets[1:]
 
-def main():
 
-    configParams = BitBakeConfigParameters()
-    configuration = cookerdata.CookerConfiguration()
-    configuration.setConfigParameters(configParams)
-
-    ui_main = get_ui(configuration)
-
-    # Server type can be xmlrpc, process or none currently, if nothing is specified,
-    # the default server is process
-    if configParams.servertype:
-        server_type = configParams.servertype
-    else:
-        server_type = 'process'
-
-    try:
-        module = __import__("bb.server", fromlist = [server_type])
-        server = getattr(module, server_type)
-    except AttributeError:
-        sys.exit("FATAL: Invalid server type '%s' specified.\n"
-                 "Valid interfaces: xmlrpc, process [default], none." % servertype)
-
-    if configParams.server_only:
-        if configParams.servertype != "xmlrpc":
-            sys.exit("FATAL: If '--server-only' is defined, we must set the servertype as 'xmlrpc'.\n")
-        if not configParams.bind:
-            sys.exit("FATAL: The '--server-only' option requires a name/address to bind to with the -B option.\n")
-
-    if configParams.bind and configParams.servertype != "xmlrpc":
-        sys.exit("FATAL: If '-B' or '--bind' is defined, we must set the servertype as 'xmlrpc'.\n")
-
-    if "BBDEBUG" in os.environ:
-        level = int(os.environ["BBDEBUG"])
-        if level > configuration.debug:
-            configuration.debug = level
-
-    bb.msg.init_msgconfig(configParams.verbose, configuration.debug,
-                         configuration.debug_domains)
-
-    # Ensure logging messages get sent to the UI as events
-    handler = bb.event.LogHandler()
-    logger.addHandler(handler)
-
-    # Clear away any spurious environment variables while we stoke up the cooker
-    cleanedvars = bb.utils.clean_environment()
-
-    server = server.BitBakeServer()
+def start_server(servermodule, configParams, configuration):
+    server = servermodule.BitBakeServer()
     if configParams.bind:
         server.initServer((configParams.bind, 0))
     else:
@@ -237,6 +210,7 @@ def main():
 
     try:
         configuration.setServerRegIdleCallback(server.getServerIdleCB())
+
         cooker = bb.cooker.BBCooker(configuration)
 
         server.addcooker(cooker)
@@ -256,9 +230,72 @@ def main():
                 logger.handle(event)
         raise exc_info[1], None, exc_info[2]
     server.detach()
+    return server
 
-    # Should no longer need to ever reference cooker
-    del cooker
+
+
+def main():
+
+    configParams = BitBakeConfigParameters()
+    configuration = cookerdata.CookerConfiguration()
+    configuration.setConfigParameters(configParams)
+
+    ui_module = get_ui(configParams)
+
+    # Server type can be xmlrpc or process currently, if nothing is specified,
+    # the default server is process
+    if configParams.servertype:
+        server_type = configParams.servertype
+    else:
+        server_type = 'process'
+
+    try:
+        module = __import__("bb.server", fromlist = [server_type])
+        servermodule = getattr(module, server_type)
+    except AttributeError:
+        sys.exit("FATAL: Invalid server type '%s' specified.\n"
+                 "Valid interfaces: xmlrpc, process [default]." % servertype)
+
+    if configParams.server_only:
+        if configParams.servertype != "xmlrpc":
+            sys.exit("FATAL: If '--server-only' is defined, we must set the servertype as 'xmlrpc'.\n")
+        if not configParams.bind:
+            sys.exit("FATAL: The '--server-only' option requires a name/address to bind to with the -B option.\n")
+
+    if configParams.bind and configParams.servertype != "xmlrpc":
+        sys.exit("FATAL: If '-B' or '--bind' is defined, we must set the servertype as 'xmlrpc'.\n")
+
+    if configParams.remote_server and configParams.servertype != "xmlrpc":
+        sys.exit("FATAL: If '--remote-server' is defined, we must set the servertype as 'xmlrpc'.\n")
+
+    if "BBDEBUG" in os.environ:
+        level = int(os.environ["BBDEBUG"])
+        if level > configuration.debug:
+            configuration.debug = level
+
+    bb.msg.init_msgconfig(configParams.verbose, configuration.debug,
+                         configuration.debug_domains)
+
+    # Ensure logging messages get sent to the UI as events
+    handler = bb.event.LogHandler()
+    logger.addHandler(handler)
+
+    # Clear away any spurious environment variables while we stoke up the cooker
+    cleanedvars = bb.utils.clean_environment()
+
+    # Collect all the caches we need
+    if configParams.server_only:
+        configuration.extra_caches = gather_extra_cache_data()
+    else:
+        configuration.extra_caches = getattr(ui_module, "extraCaches", [])
+
+    if not configParams.remote_server:
+        # we start a server with a given configuration
+        server = start_server(servermodule, configParams, configuration)
+    else:
+        # we start a stub server that is actually a XMLRPClient to
+        server = servermodule.BitBakeXMLRPCClient()
+        server.saveConnectionDetails(configParams.remote_server)
 
     logger.removeHandler(handler)
 
@@ -271,7 +308,7 @@ def main():
             os.environ[k] = cleanedvars[k]
 
         try:
-            return server.launchUI(ui_main, server_connection.connection, server_connection.events, configParams)
+            return ui_module.main(server_connection.connection, server_connection.events, configParams)
         finally:
             bb.event.ui_queue = []
             server_connection.terminate()

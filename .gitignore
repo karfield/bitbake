@@ -6,7 +6,12 @@ pyshtables.py
 /doc/manual/html/
 /build/
 /bin/bitbakec
+<<<<<<< HEAD
 .*.sw?
 documentation/user-manual/user-manual.html
 documentation/user-manual/user-manual.pdf
 documentation/user-manual/user-manual.tgz
+=======
+*.swp
+tags
+>>>>>>> master

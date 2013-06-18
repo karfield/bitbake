@@ -51,100 +51,18 @@ import inspect, select
 
 from . import BitBakeBaseServer, BitBakeBaseServerConnection, BaseImplServer
 
-if sys.hexversion < 0x020600F0:
-    print("Sorry, python 2.6 or later is required for bitbake's XMLRPC mode")
-    sys.exit(1)
+class BBTransport(xmlrpclib.Transport):
+    def __init__(self):
+        self.connection_token = None
+        xmlrpclib.Transport.__init__(self)
 
-##
-# The xmlrpclib.Transport class has undergone various changes in Python 2.7
-# which break BitBake's XMLRPC implementation.
-# To work around this we subclass Transport and have a copy/paste of method
-# implementations from Python 2.6.6's xmlrpclib.
-#
-# Upstream Python bug is #8194 (http://bugs.python.org/issue8194)
-# This bug is relevant for Python 2.7.0 and 2.7.1 but was fixed for
-# Python > 2.7.2
-#
-# To implement a simple form of client control, we use a special transport
-# that adds a HTTP header field ("Bitbake-token") to ensure that a server
-# can communicate with only a client at a given time (the client must use
-# the same token).
-##
-if (2, 7, 0) <= sys.version_info < (2, 7, 2):
-    class BBTransport(xmlrpclib.Transport):
-        def __init__(self):
-            self.connection_token = None
-            xmlrpclib.Transport.__init__(self)
+    def set_connection_token(self, token):
+        self.connection_token = token
 
-        def request(self, host, handler, request_body, verbose=0):
-            h = self.make_connection(host)
-            if verbose:
-                h.set_debuglevel(1)
-
-            self.send_request(h, handler, request_body)
-            self.send_host(h, host)
-            self.send_user_agent(h)
-            if self.connection_token:
-                h.putheader("Bitbake-token", self.connection_token)
-            self.send_content(h, request_body)
-
-            errcode, errmsg, headers = h.getreply()
-
-            if errcode != 200:
-                raise ProtocolError(
-                    host + handler,
-                    errcode, errmsg,
-                    headers
-                    )
-
-            self.verbose = verbose
-
-            try:
-                sock = h._conn.sock
-            except AttributeError:
-                sock = None
-
-            return self._parse_response(h.getfile(), sock)
-
-        def make_connection(self, host):
-            import httplib
-            host, extra_headers, x509 = self.get_host_info(host)
-            return httplib.HTTP(host)
-
-        def _parse_response(self, file, sock):
-            p, u = self.getparser()
-
-            while 1:
-                if sock:
-                    response = sock.recv(1024)
-                else:
-                    response = file.read(1024)
-                if not response:
-                    break
-                if self.verbose:
-                    print("body:", repr(response))
-                p.feed(response)
-
-            file.close()
-            p.close()
-
-            return u.close()
-
-        def set_connection_token(self, token):
-            self.connection_token = token
-else:
-    class BBTransport(xmlrpclib.Transport):
-        def __init__(self):
-            self.connection_token = None
-            xmlrpclib.Transport.__init__(self)
-
-        def set_connection_token(self, token):
-            self.connection_token = token
-
-        def send_content(self, h, body):
-            if self.connection_token:
-                h.putheader("Bitbake-token", self.connection_token)
-            xmlrpclib.Transport.send_content(self, h, body)
+    def send_content(self, h, body):
+        if self.connection_token:
+            h.putheader("Bitbake-token", self.connection_token)
+        xmlrpclib.Transport.send_content(self, h, body)
 
 def _create_server(host, port):
     t = BBTransport()
@@ -175,7 +93,7 @@ class BitBakeServerCommands():
         """
         Run a cooker command on the server
         """
-        return self.cooker.command.runCommand(command)
+        return self.cooker.command.runCommand(command, self.server.readonly)
 
     def terminateServer(self):
         """
@@ -206,7 +124,7 @@ class BitBakeServerCommands():
 # ("service unavailable") is returned to the client.
 class BitBakeXMLRPCRequestHandler(SimpleXMLRPCRequestHandler):
     def __init__(self, request, client_address, server):
-        self.connection_token = server.connection_token
+        self.server = server
         SimpleXMLRPCRequestHandler.__init__(self, request, client_address, server)
 
     def do_POST(self):
@@ -214,9 +132,13 @@ class BitBakeXMLRPCRequestHandler(SimpleXMLRPCRequestHandler):
             remote_token = self.headers["Bitbake-token"]
         except:
             remote_token = None
-        if remote_token != self.connection_token:
+        if remote_token != self.server.connection_token and remote_token != "observer":
             self.report_503()
         else:
+            if remote_token == "observer":
+                self.server.readonly = True
+            else:
+                self.server.readonly = False
             SimpleXMLRPCRequestHandler.do_POST(self)
 
     def report_503(self):
@@ -272,59 +194,6 @@ class BitBakeUIEventServer(threading.Thread):
             if evt:
                 self.connection.event.sendpickle(pickle.dumps(evt))
 
-class BitBakeXMLRPCEventServerController(SimpleXMLRPCServer, threading.Thread):
-    def __init__(self, interface):
-        SimpleXMLRPCServer.__init__(self, interface, logRequests=False, allow_none=True)
-        threading.Thread.__init__(self)
-        self.register_function(self.registerEventHandler, "registerEventHandler")
-        self.register_function(self.unregisterEventHandler, "unregisterEventHandler")
-        self.register_function(self.terminateServer, "terminateServer")
-        #self.register_function(self.runCommand, "runCommand")
-        self.quit = False
-        self.clients = {}
-        self.client_ui_ids = {}
-        self.timeout = 1    # timeout for .handle_request()
-
-    def registerEventHandler(self, host, port):
-        """
-        Register a remote UI Event Handler
-        """
-        connection = xmlrpclib.ServerProxy("http://%s:%d/" % (host, port), allow_none=True)
-        client_hash = "%s:%d" % (host, port)
-        if self.clients.has_key(client_hash):
-            return None
-        client_ui_server = BitBakeUIEventServer(connection)
-        self.client_ui_ids[client_hash] = bb.event.register_UIHhandler(client_ui_server)
-        client_ui_server.start()
-        self.clients[client_hash] = client_ui_server
-        return client_hash
-
-    def unregisterEventHandler(self, client_hash):
-        """
-        Unregister a remote UI Event Handler
-        """
-        client_thread = self.clients[client_hash]
-        if client_thread:
-            bb.event.unregister_UIHhandler(self.clients_ui_ids[client_hash])
-            client_thread.terminateServer()
-            client_thread.join()
-            return True
-        else:
-            return False
-
-    def terminateServer(self):
-        self.quit = True
-
-    def runCommand(self, cmd):
-        return None
-
-    def run(self):
-        self.serve_forever()
-
-    def serve_forever(self):
-        while not self.quit:
-            self.handle_request()
-        self.server_close()
 
 class XMLRPCProxyServer(BaseImplServer):
     """ not a real working server, but a stub for a proxy server connection
@@ -369,9 +238,6 @@ class XMLRPCServer(SimpleXMLRPCServer, BaseImplServer):
 
 
     def serve_forever(self):
-        # Create and run the event server controller in a separate thread
-        self.event_controller_thread = BitBakeXMLRPCEventServerController((self.host, self.port + 2))
-        self.event_controller_thread.start()
         # Start the actual XMLRPC server
         bb.cooker.server_main(self.cooker, self._serve_forever)
 
@@ -414,9 +280,6 @@ class XMLRPCServer(SimpleXMLRPCServer, BaseImplServer):
                 retval = function(self, data, True)
             except:
                 pass
-        # Terminate the event server
-        self.event_controller_thread.terminateServer()
-        self.event_controller_thread.join()
         self.server_close()
         return
 
@@ -424,13 +287,17 @@ class XMLRPCServer(SimpleXMLRPCServer, BaseImplServer):
         self.connection_token = token
 
 class BitBakeXMLRPCServerConnection(BitBakeBaseServerConnection):
-    def __init__(self, serverImpl, clientinfo=("localhost", 0)):
+    def __init__(self, serverImpl, clientinfo=("localhost", 0), observer_only = False):
         self.connection, self.transport = _create_server(serverImpl.host, serverImpl.port)
         self.clientinfo = clientinfo
         self.serverImpl = serverImpl
+        self.observer_only = observer_only
 
     def connect(self):
-        token = self.connection.addClient()
+        if not self.observer_only:
+            token = self.connection.addClient()
+        else:
+            token = "observer"
         if token is None:
             return None
         self.transport.set_connection_token(token)
@@ -440,7 +307,8 @@ class BitBakeXMLRPCServerConnection(BitBakeBaseServerConnection):
         return self
 
     def removeClient(self):
-        self.connection.removeClient()
+        if not self.observer_only:
+            self.connection.removeClient()
 
     def terminate(self):
         # Don't wait for server indefinitely
@@ -472,7 +340,8 @@ class BitBakeServer(BitBakeBaseServer):
 
 class BitBakeXMLRPCClient(BitBakeBaseServer):
 
-    def __init__(self):
+    def __init__(self, observer_only = False):
+        self.observer_only = observer_only
         pass
 
     def saveConnectionDetails(self, remote):
@@ -495,7 +364,7 @@ class BitBakeXMLRPCClient(BitBakeBaseServer):
         except:
             return None
         self.serverImpl = XMLRPCProxyServer(host, port)
-        self.connection = BitBakeXMLRPCServerConnection(self.serverImpl, (ip, 0))
+        self.connection = BitBakeXMLRPCServerConnection(self.serverImpl, (ip, 0), self.observer_only)
         return self.connection.connect()
 
     def endSession(self):

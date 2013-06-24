@@ -121,7 +121,7 @@ class ParameterError(BBFetchException):
 class NetworkAccess(BBFetchException):
     """Exception raised when network access is disabled but it is required."""
     def __init__(self, url, cmd):
-         msg = "Network access disabled through BB_NO_NETWORK but access requested with command %s (for url %s)" % (cmd, url)
+         msg = "Network access disabled through BB_NO_NETWORK (or set indirectly due to use of BB_FETCH_PREMIRRORONLY) but access requested with command %s (for url %s)" % (cmd, url)
          self.url = url
          self.cmd = cmd
          BBFetchException.__init__(self, msg)
@@ -990,13 +990,13 @@ class FetchData(object):
             self.sha256_name = "sha256sum"
         if self.md5_name in self.parm:
             self.md5_expected = self.parm[self.md5_name]
-        elif self.type not in ["http", "https", "ftp", "ftps"]:
+        elif self.type not in ["http", "https", "ftp", "ftps", "sftp"]:
             self.md5_expected = None
         else:
             self.md5_expected = d.getVarFlag("SRC_URI", self.md5_name)
         if self.sha256_name in self.parm:
             self.sha256_expected = self.parm[self.sha256_name]
-        elif self.type not in ["http", "https", "ftp", "ftps"]:
+        elif self.type not in ["http", "https", "ftp", "ftps", "sftp"]:
             self.sha256_expected = None
         else:
             self.sha256_expected = d.getVarFlag("SRC_URI", self.sha256_name)
@@ -1105,7 +1105,7 @@ class FetchMethod(object):
     def recommends_checksum(self, urldata):
         """
         Is the backend on where checksumming is recommended (should warnings 
-        by displayed if there is no checksum)?
+        be displayed if there is no checksum)?
         """
         return False
 
